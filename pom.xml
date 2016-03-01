@@ -20,8 +20,10 @@
 	<properties>
 		<java.version>1.8</java.version>
 		<cloudfoundry-client-lib.version>1.1.4.RELEASE</cloudfoundry-client-lib.version>
+		<cloudfoundry-java-client.version>2.0.0.BUILD-SNAPSHOT</cloudfoundry-java-client.version>
 		<spock-core.version>1.0-groovy-2.4</spock-core.version>
 		<groovy-all.version>2.4.4</groovy-all.version>
+		<reactor.version>2.5.0.BUILD-SNAPSHOT</reactor.version>
 	</properties>
 
 	<dependencies>
@@ -42,6 +44,12 @@
 			<groupId>org.cloudfoundry</groupId>
 			<artifactId>cloudfoundry-client-lib</artifactId>
 			<version>${cloudfoundry-client-lib.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.cloudfoundry</groupId>
+			<artifactId>cloudfoundry-client-spring</artifactId>
+			<version>${cloudfoundry-java-client.version}</version>
 		</dependency>
 
 		<dependency>
