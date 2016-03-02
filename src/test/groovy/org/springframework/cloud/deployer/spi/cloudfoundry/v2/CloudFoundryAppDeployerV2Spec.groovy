@@ -15,15 +15,20 @@
  */
 
 package org.springframework.cloud.deployer.spi.cloudfoundry.v2
-
+import org.cloudfoundry.client.CloudFoundryClient
 import org.cloudfoundry.client.lib.domain.CloudApplication
 import org.cloudfoundry.spring.client.SpringCloudFoundryClient
+import org.cloudfoundry.spring.util.network.ConnectionContext
+import org.cloudfoundry.spring.util.network.OAuth2TokenProvider
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.cloud.deployer.spi.AppDefinition
 import org.springframework.cloud.deployer.spi.AppDeploymentId
 import org.springframework.cloud.deployer.spi.AppDeploymentRequest
 import org.springframework.cloud.deployer.spi.cloudfoundry.CloudFoundryAppDeployProperties
-import org.springframework.cloud.deployer.spi.cloudfoundry.CloudFoundryAppDeployer
 import org.springframework.core.io.Resource
+import org.springframework.security.oauth2.client.OAuth2ClientContext
+import org.springframework.web.client.RestOperations
+import reactor.core.publisher.SchedulerGroup
 import spock.lang.Specification
 /**
  * @author Greg Turnquist
@@ -34,20 +39,48 @@ class CloudFoundryAppDeployerV2Spec extends Specification {
 
 	Resource resource
 
+	@Value('${cf.host}')
+	String host
+
+	@Value('${cf.username}')
+	String username
+
+	@Value('${cf.password}')
+	String password
+
 	def setup() {
 		resource = Mock(Resource)
 
-		def host = 'api.white.springapps.io'
 		def skipSslValidation = true
-		def username = 'gturnquist@pivotal.io'
-		def password = 'Delta1143'
 
-		client = SpringCloudFoundryClient.builder()
-				.host(host)
-				.username(username)
-				.password(password)
-				.skipSslValidation(skipSslValidation)
-				.build()
+		//    SpringCloudFoundryClient(
+		// ConnectionContext connectionContext,
+		// RestOperations restOperations,
+		// URI root,
+		// SchedulerGroup schedulerGroup,
+		// OAuth2TokenProvider tokenProvider) {
+
+		def connectContext = ConnectionContext.builder()
+			.clientContext(Mock(OAuth2ClientContext))
+			.cloudFoundryClient(Mock(CloudFoundryClient))
+			.hostnameVerifier(null)
+			.build()
+
+		def restOperations = Mock(RestOperations)
+
+		client = new SpringCloudFoundryClient(
+				connectContext,
+				restOperations,
+				"api.example.com".toURI(),
+				SchedulerGroup.async(),
+				Mock(OAuth2TokenProvider))
+
+//		client = SpringCloudFoundryClient.builder()
+//				.host(host)
+//				.username(username)
+//				.password(password)
+//				.skipSslValidation(skipSslValidation)
+//				.build()
 	}
 
 	def "should handle deploying a non-existent app"() {
@@ -94,7 +127,7 @@ class CloudFoundryAppDeployerV2Spec extends Specification {
 	def "should fail when deploying an already-existing app"() {
 		given:
 		CloudFoundryAppDeployProperties properties = new CloudFoundryAppDeployProperties()
-		CloudFoundryAppDeployer deployer = new CloudFoundryAppDeployer(properties, client)
+		CloudFoundryAppDeployerV2 deployer = new CloudFoundryAppDeployerV2(properties, client)
 
 		def appName = 'my-cool-app'
 
