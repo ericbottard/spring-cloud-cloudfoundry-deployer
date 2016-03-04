@@ -15,19 +15,16 @@
  */
 package org.springframework.cloud.deployer.spi.cloudfoundry;
 
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
-import org.cloudfoundry.client.lib.CloudFoundryOperations;
 import org.cloudfoundry.client.lib.domain.InstanceInfo;
-import org.cloudfoundry.client.lib.domain.InstanceState;
-import org.cloudfoundry.client.lib.domain.InstancesInfo;
+import org.cloudfoundry.client.v3.applications.GetApplicationStatisticsResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.springframework.cloud.deployer.spi.process.AppInstanceStatus;
 import org.springframework.cloud.deployer.spi.process.DeploymentState;
-import org.springframework.web.client.HttpStatusCodeException;
 
 /**
  * Wrap an {@link InstanceInfo} and provide convenient operations.
@@ -36,83 +33,42 @@ import org.springframework.web.client.HttpStatusCodeException;
  */
 public class CloudFoundryInstance implements AppInstanceStatus {
 
-	private final String appDeploymentId;
+	private static final Logger logger = LoggerFactory.getLogger(CloudFoundryInstance.class);
 
-	private final InstanceInfo instance;
-	private final CloudFoundryOperations client;
+	private final GetApplicationStatisticsResponse.Statistics statistics;
 
-	public CloudFoundryInstance(String appDeploymentId, InstanceInfo instance, CloudFoundryOperations client) {
+	public CloudFoundryInstance(GetApplicationStatisticsResponse.Statistics statistics) {
 
-		this.appDeploymentId = appDeploymentId;
-		this.instance = instance;
-		this.client = client;
+		this.statistics = statistics;
 	}
 
 	@Override
 	public String getId() {
-		return appDeploymentId + "(" + instance.getIndex() + ")";
+		return statistics.getHost() + ":" + statistics.getPort() + "(" + statistics.getIndex() + ")";
 	}
 
-	/**
-	 * Parse the current state of an app deployed to Cloud Foundry
-	 *
-	 * @return {@link DeploymentState} containing list of Cloud Foundry instances
-	 */
 	@Override
 	public DeploymentState getState() {
 
-		try {
-			return Optional.ofNullable(client.getApplicationInstances(appDeploymentId))
-						.orElse(new InstancesInfo(Collections.emptyList()))
-						.getInstances().stream()
-							.filter(i -> i.getIndex() == this.instance.getIndex())
-							.map(i -> getDeploymentState(i.getState()))
-							.findFirst()
-							.orElse(DeploymentState.unknown);
-
-		} catch (HttpStatusCodeException e) {
-			// Failing to look up an app indicates failure to deploy
-			return DeploymentState.failed;
-		}
-	}
-
-	/**
-	 * Convert from Cloud Foundry {@link InstanceState} to Spring Cloud Deployer {@link DeploymentState}.
-	 *
-	 * @param instanceState
-	 * @return {@link DeploymentState} for a single Cloud Foundry instance
-	 */
-	private DeploymentState getDeploymentState(InstanceState instanceState) {
-
-		switch (instanceState == null? InstanceState.UNKNOWN : instanceState) {
-			case STARTING:
-				return DeploymentState.deploying;
-			case RUNNING:
+		switch (statistics.getState()) {
+			case "RUNNING":
 				return DeploymentState.deployed;
-			case FLAPPING:
-				return DeploymentState.unknown;
-			case CRASHED:
-				return DeploymentState.failed;
-			case DOWN:
-				return DeploymentState.failed;
-			case UNKNOWN:
 			default:
+				logger.warn("!!! We don't know how to handle " + statistics.getState());
 				return DeploymentState.unknown;
 		}
 	}
 
-	/**
-	 * Grab the application's environment variables from Cloud Foundry
-	 *
-	 * @return {@link Map} of environment variables read from Cloud Foundry app
-	 */
 	@Override
 	public Map<String, String> getAttributes() {
 
-		return client.getApplicationEnvironment(appDeploymentId)
-				.entrySet().stream()
-				.collect(Collectors.toMap(
-					Map.Entry::getKey,
-					value -> value.getValue().toString()));
+		Map<String, String> attrs = new HashMap<>();
+
+		attrs.put("disk", Long.toString(statistics.getDiskQuota()));
+		attrs.put("fds", Long.toString(statistics.getFdsQuota()));
+		attrs.put("memory", Long.toString(statistics.getMemoryQuota()));
+		attrs.put("type", statistics.getType());
+
+		return attrs;
 	}
 }

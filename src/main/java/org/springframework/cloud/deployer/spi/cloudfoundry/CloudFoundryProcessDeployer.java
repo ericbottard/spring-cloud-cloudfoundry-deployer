@@ -15,22 +15,28 @@
  */
 package org.springframework.cloud.deployer.spi.cloudfoundry;
 
-import static java.util.stream.Collectors.joining;
-
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
-import org.cloudfoundry.client.lib.CloudFoundryOperations;
-import org.cloudfoundry.client.lib.domain.InstancesInfo;
-import org.cloudfoundry.client.lib.domain.Staging;
+import org.cloudfoundry.client.CloudFoundryClient;
+import org.cloudfoundry.client.v3.applications.Application;
+import org.cloudfoundry.client.v3.applications.CreateApplicationRequest;
+import org.cloudfoundry.client.v3.applications.DeleteApplicationRequest;
+import org.cloudfoundry.client.v3.applications.GetApplicationStatisticsRequest;
+import org.cloudfoundry.client.v3.applications.ListApplicationsRequest;
+import org.cloudfoundry.client.v3.applications.StartApplicationRequest;
+import org.cloudfoundry.client.v3.packages.CreatePackageRequest;
+import org.cloudfoundry.client.v3.packages.StagePackageRequest;
+import org.cloudfoundry.client.v3.packages.UploadPackageRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.tuple.Tuple2;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
@@ -49,13 +55,13 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 
 	private CloudFoundryAppDeployProperties properties = new CloudFoundryAppDeployProperties();
 
-	private CloudFoundryOperations client;
+	private final CloudFoundryClient client;
 
 	private List<Logger> loggers = new ArrayList<>();
 
 	@Autowired
 	public CloudFoundryProcessDeployer(CloudFoundryAppDeployProperties properties,
-									   CloudFoundryOperations client) {
+									   CloudFoundryClient client) {
 		this.properties = properties;
 		this.client = client;
 		this.registerCustomerLogger(logger);
@@ -75,93 +81,94 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 	@Override
 	public String deploy(AppDeploymentRequest request) {
 
-		String appName = request.getDefinition().getName();
+		if (!appExists(request.getDefinition().getName())) {
 
-		createApplication(appName);
+			return createApplication(request)
+					.then(applicationId -> createPackage(applicationId))
+					.then(response -> uploadPackage(response.getT1(), response.getT2(), request))
+					.then(uploadResponse -> stagePackage(uploadResponse.getT1(), uploadResponse.getT2()))
+					.then(applicationId -> launchApp(applicationId))
+					.subscribe()
+					.get(Duration.ofSeconds(120));
 
-		addEnvVariables(appName, request);
-
-		uploadApplication(appName, request);
-
-		loggers.parallelStream().forEach(logger -> logger.info("Scaling " + appName + " to " + properties.getInstances() + " instance" + (properties.getInstances() == 1 ? "" : "s")));
-		client.updateApplicationInstances(appName, properties.getInstances());
-
-		loggers.parallelStream().forEach(logger -> logger.info("Starting " + appName));
-		client.startApplication(appName);
-
-		return appName;
+		} else {
+			throw new IllegalStateException(request.getDefinition().getName() + " is already deployed.");
+		}
 	}
 
 	/**
 	 * Create/Update a Cloud Foundry application using various settings.
 	 *
-	 * TODO: Better handle URLs. Right now, it just creates a URL out of thin air based on app name
-	 *
-	 * @param appName
+	 * @param request
 	 */
-	private void createApplication(String appName) {
+	private Mono<String> createApplication(AppDeploymentRequest request) {
 
-		if (!appExists(appName)) {
-			Staging staging = new Staging(null, properties.getBuildpack());
-			String url = appName + "." + client.getDefaultDomain().getName();
+		return client.applicationsV3()
+			.create(CreateApplicationRequest.builder()
+				.name(request.getDefinition().getName())
+				.environmentVariables(envVariables(request))
+				.build())
+			.map(Application::getId);
+	}
 
-			loggers.parallelStream().forEach(logger -> logger.info("Creating new application " + appName + " at " + url + " with "
-					+ Arrays.asList(
-						properties.getMemory() + "M mem",
-						properties.getDisk() + "M disk",
-						"[" + properties.getServices().stream().collect(joining(",")) + "] services",
-						!properties.getBuildpack().equals("") ? properties.getBuildpack() + " buildpack" : "default buildpack"
-					).stream().collect(joining(", "))));
+	private Mono<Tuple2<String,String>> createPackage(String applicationId) {
 
-			client.createApplication(appName,
-					staging,
-					properties.getDisk(),
-					properties.getMemory(),
-					Collections.singletonList(url),
-					new ArrayList<>(properties.getServices()));
-		} else {
-			throw new IllegalStateException(appName + " is already deployed.");
+		return client.packages()
+				.create(CreatePackageRequest.builder()
+						.applicationId(applicationId)
+						.build())
+				.map(response -> Tuple2.of(response.getId(), applicationId))
+				.doOnSubscribe(subscription -> logger.debug("Starting Create Package"));
+	}
+
+	private Mono<Tuple2<String,String>> uploadPackage(String packageId, String applicationId, AppDeploymentRequest request) {
+
+		try {
+			return client.packages()
+				.upload(UploadPackageRequest.builder()
+					.packageId(packageId)
+					.bits(request.getResource().getInputStream())
+					.build())
+				.map(response -> Tuple2.of(packageId, applicationId));
+		} catch (IOException e) {
+			return Mono.error(e);
 		}
+	}
+
+	private Mono<String> stagePackage(String packageId, String applicationId) {
+
+		return client.packages()
+				.stage(StagePackageRequest.builder()
+						.packageId(packageId)
+						.build())
+				.map(response -> applicationId);
+	}
+
+	private Mono<String> launchApp(String applicationId) {
+
+		return client.applicationsV3()
+			.start(StartApplicationRequest.builder()
+				.applicationId(applicationId)
+					.build())
+			.map(Application::getId);
 	}
 
 	/**
 	 * Scan deploymentProperties and apply ones that start with the prefix as
 	 * Cloud Foundry environmental variables minus the prefix.
 	 *
-	 * @param appName
 	 * @param request
+	 * @return a map of environment properties
 	 */
-	private void addEnvVariables(String appName, AppDeploymentRequest request) {
+	private Map<String, String> envVariables(AppDeploymentRequest request) {
 
 		String envPrefix = "env.";
 
-		Map<String,String> env = request.getEnvironmentProperties().entrySet().stream()
+		return request.getEnvironmentProperties().entrySet().stream()
 				.filter(e -> e.getKey().startsWith(envPrefix))
 				.collect(Collectors.toMap(
 						e -> e.getKey().substring(envPrefix.length()),
 						Map.Entry::getValue));
-
-		loggers.parallelStream().forEach(logger -> logger.info("Assigning env variables " + env + " to " + appName));
-
-		client.updateApplicationEnv(appName, env);
-	}
-
-	/**
-	 * Fetch the {@Resource}'s {@InputStream} and upload it to Cloud Foundry
-	 *
-	 * @param appName
-	 * @param request
-	 */
-	private void uploadApplication(String appName, AppDeploymentRequest request) {
-
-		try {
-			loggers.parallelStream().forEach(logger -> logger.info("Uploading " + request.getResource() + " to " + appName));
-
-			client.uploadApplication(appName, "spring-cloud-deployer-cloudfoundry",
-					request.getResource().getInputStream());
-		} catch (IOException e) {
-			throw new RuntimeException("Exception trying to deploy " + request, e);
-		}
 	}
 
 	/**
@@ -173,11 +180,24 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 	private boolean appExists(String appName) {
 
 		try {
-			client.getApplication(appName);
 
-			loggers.parallelStream().forEach(logger -> logger.info("Does " + appName + " exist? Yes"));
+			long count = client.applicationsV3()
+					.list(ListApplicationsRequest.builder()
+						.name(appName)
+						.page(1)
+						.build())
+					.flatMap(response -> Flux.fromIterable(response.getResources()))
+					.count()
+					.get(Duration.ofSeconds(10));
 
-			return true;
+			if (count > 0) {
+				loggers.parallelStream().forEach(logger -> logger.info("Does " + appName + " exist? Yes"));
+				return true;
+			} else {
+				loggers.parallelStream().forEach(logger -> logger.info("Does " + appName + " exist? No"));
+				return false;
+			}
+
 		} catch (HttpStatusCodeException e) {
 			loggers.parallelStream().forEach(logger -> logger.info("Does " + appName + " exist? No"));
 			return false;
@@ -185,6 +205,7 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 	}
 
 	/**
+	 * Find the application and delete it
 	 *
 	 * @param id
 	 * @throws {@link IllegalStateException} if the app does NOT exist.
@@ -193,24 +214,51 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 	public void undeploy(String id) {
 
 		if (appExists(id)) {
-			client.deleteApplication(id);
+
+			client.applicationsV3()
+					.list(ListApplicationsRequest.builder()
+						.name(id)
+						.page(1)
+						.build())
+					.flatMap(response -> Flux.fromIterable(response.getResources()))
+					.single()
+					.map(Application::getId)
+					.map(applicationId -> client.applicationsV3()
+						.delete(DeleteApplicationRequest.builder()
+							.applicationId(applicationId)
+							.build()))
+					.get(Duration.ofSeconds(10));
 		} else {
 			throw new IllegalStateException(id + " is not deployed.");
 		}
 	}
 
+	/**
+	 * Find a given application and return its status
+	 *
+	 * @param id
+	 * @return {@link ProcessStatus} of the application
+	 */
 	@Override
 	public ProcessStatus status(String id) {
 
-		ProcessStatus.Builder builder = ProcessStatus.of(id);
-
-		Optional.ofNullable(client.getApplicationInstances(id))
-				.orElse(new InstancesInfo(Collections.emptyList()))
-				.getInstances().stream()
-				.map(i -> new CloudFoundryInstance(id, i, client))
-				.forEach(i -> builder.with(i));
-
-		return builder.build();
+		return client.applicationsV3()
+				.list(ListApplicationsRequest.builder()
+					.name(id)
+					.page(1)
+					.build())
+				.flatMap(response -> Flux.fromIterable(response.getResources()))
+				.single()
+				.map(Application::getId)
+				.flatMap(applicationId -> client.applicationsV3()
+					.getStatistics(GetApplicationStatisticsRequest.builder()
+						.applicationId(applicationId)
+						.build()))
+				.flatMap(response -> Flux.fromIterable(response.getProcesses()))
+				.map(CloudFoundryInstance::new)
+				.reduce(ProcessStatus.of(id), ProcessStatus.Builder::with)
+				.get(Duration.ofSeconds(10))
+				.build();
 	}
 
 }
