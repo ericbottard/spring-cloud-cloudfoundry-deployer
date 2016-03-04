@@ -15,8 +15,6 @@
  */
 package org.springframework.cloud.deployer.spi.cloudfoundry.v2;
 
-import static org.cloudfoundry.util.OperationUtils.afterComplete;
-
 import java.io.IOException;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -28,12 +26,13 @@ import org.cloudfoundry.client.v3.applications.DeleteApplicationRequest;
 import org.cloudfoundry.client.v3.applications.GetApplicationRequest;
 import org.cloudfoundry.client.v3.applications.ScaleApplicationRequest;
 import org.cloudfoundry.client.v3.applications.StartApplicationRequest;
+import org.cloudfoundry.operations.CloudFoundryOperations;
+import org.cloudfoundry.operations.CloudFoundryOperationsBuilder;
 import org.cloudfoundry.spring.client.SpringCloudFoundryClient;
 import org.cloudfoundry.util.JobUtils;
 import org.cloudfoundry.util.ResourceUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import reactor.core.publisher.Mono;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.deployer.spi.AppDeployer;
@@ -41,6 +40,8 @@ import org.springframework.cloud.deployer.spi.AppDeploymentId;
 import org.springframework.cloud.deployer.spi.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.cloudfoundry.CloudFoundryAppDeployProperties;
 import org.springframework.cloud.deployer.spi.status.AppStatus;
+
+import reactor.core.publisher.Mono;
 
 /**
  * @author Greg Turnquist
@@ -51,13 +52,13 @@ public class CloudFoundryAppDeployerV2 implements AppDeployer {
 
 	private final CloudFoundryAppDeployProperties properties;
 
-	private final SpringCloudFoundryClient client;
+	private final CloudFoundryOperations operations;
 
 	@Autowired
 	CloudFoundryAppDeployerV2(CloudFoundryAppDeployProperties properties,
-							  SpringCloudFoundryClient client) {
+							  CloudFoundryOperations operations) {
 		this.properties = properties;
-		this.client = client;
+		this.operations = operations;
 	}
 
 	@Override
@@ -68,14 +69,14 @@ public class CloudFoundryAppDeployerV2 implements AppDeployer {
 		// Pick app name
 		String appName = request.getDefinition().getName();
 
-		Mono.just(appName)
-			.log()
-			.then(a -> createApplication(client, appName, request))
-			.then(appId -> uploadApplication(client, appId, request))
-			.then(appId -> updateApplicationInstances(client, appId, request))
-			.then(appId -> startApplication(client, appId, request))
-			.after()
-			.get();
+//		Mono.just(appName)
+//			.log()
+//			.then(a -> createApplication(client, appName, request))
+//			.then(appId -> uploadApplication(client, appId, request))
+//			.then(appId -> updateApplicationInstances(client, appId, request))
+//			.then(appId -> startApplication(client, appId, request))
+//			.after()
+//			.get();
 
 		// Formulate the record of this deployment
 		return new AppDeploymentId(request.getDefinition().getGroup(), appName);

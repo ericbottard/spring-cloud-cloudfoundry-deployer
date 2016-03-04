@@ -15,11 +15,11 @@
  */
 package org.springframework.cloud.deployer.spi.cloudfoundry;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.net.URL;
 import java.util.HashSet;
 import java.util.Set;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * @author Greg Turnquist

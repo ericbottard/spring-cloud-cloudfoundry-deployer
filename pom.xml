@@ -51,6 +51,11 @@
 			<artifactId>cloudfoundry-client-spring</artifactId>
 			<version>${cloudfoundry-java-client.version}</version>
 		</dependency>
+		<dependency>
+			<groupId>org.cloudfoundry</groupId>
+			<artifactId>cloudfoundry-operations</artifactId>
+			<version>${cloudfoundry-java-client.version}</version>
+		</dependency>
 
 		<dependency>
 			<groupId>org.spockframework</groupId>
