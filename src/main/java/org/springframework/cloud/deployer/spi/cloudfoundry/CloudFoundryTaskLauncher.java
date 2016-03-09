@@ -22,7 +22,6 @@ import org.cloudfoundry.client.CloudFoundryClient;
 import org.cloudfoundry.client.v3.applications.Application;
 import org.cloudfoundry.client.v3.applications.CreateApplicationRequest;
 import org.cloudfoundry.client.v3.applications.ListApplicationTasksRequest;
-import org.cloudfoundry.client.v3.applications.ListApplicationTasksResponse;
 import org.cloudfoundry.client.v3.applications.ListApplicationsRequest;
 import org.cloudfoundry.client.v3.packages.CreatePackageRequest;
 import org.cloudfoundry.client.v3.packages.Package;
@@ -33,6 +32,7 @@ import org.cloudfoundry.client.v3.tasks.CancelTaskRequest;
 import org.cloudfoundry.client.v3.tasks.CreateTaskRequest;
 import org.cloudfoundry.client.v3.tasks.CreateTaskResponse;
 import org.cloudfoundry.client.v3.tasks.Task;
+import org.cloudfoundry.client.v3.tasks.TaskResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
@@ -264,12 +264,12 @@ public class CloudFoundryTaskLauncher implements TaskLauncher {
 	}
 
 	/**
-	 * Convert a {@link ListApplicationTasksResponse.Resource} into a {@Link LaunchState}.
+	 * Convert a {@link TaskResource} into a {@Link LaunchState}.
 	 *
 	 * @param task
 	 * @return {@link LaunchState} of the task.
 	 */
-	private static LaunchState mapState(ListApplicationTasksResponse.Resource task) {
+	private static LaunchState mapState(TaskResource task) {
 		switch (task.getState()) {
 			case Task.SUCCEEDED_STATE:
 				return LaunchState.complete;
