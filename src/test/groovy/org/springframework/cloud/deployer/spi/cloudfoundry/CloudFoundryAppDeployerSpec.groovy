@@ -24,7 +24,7 @@ import org.cloudfoundry.client.lib.domain.InstanceState
 import org.cloudfoundry.client.lib.domain.InstancesInfo
 import org.springframework.cloud.deployer.spi.core.AppDefinition
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest
-import org.springframework.cloud.deployer.spi.process.DeploymentState
+import org.springframework.cloud.deployer.spi.app.DeploymentState
 import org.springframework.core.io.Resource
 import org.springframework.http.HttpStatus
 import spock.lang.Specification

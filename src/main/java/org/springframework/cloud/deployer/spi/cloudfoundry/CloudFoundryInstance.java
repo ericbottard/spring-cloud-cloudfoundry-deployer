@@ -23,8 +23,8 @@ import org.cloudfoundry.client.v3.applications.GetApplicationStatisticsResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.springframework.cloud.deployer.spi.process.AppInstanceStatus;
-import org.springframework.cloud.deployer.spi.process.DeploymentState;
+import org.springframework.cloud.deployer.spi.app.AppInstanceStatus;
+import org.springframework.cloud.deployer.spi.app.DeploymentState;
 
 /**
  * Wrap an {@link InstanceInfo} and provide convenient operations.

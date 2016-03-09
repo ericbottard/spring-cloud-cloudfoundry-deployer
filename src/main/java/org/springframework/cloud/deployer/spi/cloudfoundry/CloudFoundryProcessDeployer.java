@@ -39,9 +39,9 @@ import reactor.core.publisher.Mono;
 import reactor.core.tuple.Tuple2;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.deployer.spi.app.AppDeployer;
+import org.springframework.cloud.deployer.spi.app.AppStatus;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
-import org.springframework.cloud.deployer.spi.process.ProcessDeployer;
-import org.springframework.cloud.deployer.spi.process.ProcessStatus;
 import org.springframework.web.client.HttpStatusCodeException;
 
 /**
@@ -49,7 +49,7 @@ import org.springframework.web.client.HttpStatusCodeException;
  *
  * @author Greg Turnquist
  */
-public class CloudFoundryProcessDeployer implements ProcessDeployer {
+public class CloudFoundryProcessDeployer implements AppDeployer {
 
 	private static final Logger logger = LoggerFactory.getLogger(CloudFoundryProcessDeployer.class);
 
@@ -233,14 +233,8 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 		}
 	}
 
-	/**
-	 * Find a given application and return its status
-	 *
-	 * @param id
-	 * @return {@link ProcessStatus} of the application
-	 */
 	@Override
-	public ProcessStatus status(String id) {
+	public AppStatus status(String id) {
 
 		return client.applicationsV3()
 				.list(ListApplicationsRequest.builder()
@@ -256,7 +250,7 @@ public class CloudFoundryProcessDeployer implements ProcessDeployer {
 						.build()))
 				.flatMap(response -> Flux.fromIterable(response.getProcesses()))
 				.map(CloudFoundryInstance::new)
-				.reduce(ProcessStatus.of(id), ProcessStatus.Builder::with)
+				.reduce(AppStatus.of(id), AppStatus.Builder::with)
 				.get(Duration.ofSeconds(10))
 				.build();
 	}
