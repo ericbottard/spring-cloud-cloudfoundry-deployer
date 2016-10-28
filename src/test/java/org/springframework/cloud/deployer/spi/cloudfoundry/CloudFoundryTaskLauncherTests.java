@@ -81,13 +81,14 @@ import org.junit.Test;
 import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 import org.springframework.cloud.deployer.spi.core.AppDefinition;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.task.LaunchState;
 import org.springframework.cloud.deployer.spi.task.TaskStatus;
 import org.springframework.core.io.Resource;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 /**
  * @author Michael Minella
@@ -165,6 +166,14 @@ public class CloudFoundryTaskLauncherTests {
 				.build())
 			.build()));
 
+		givenRequestGetDroplet("test-droplet-id",
+			Mono.just(GetDropletResponse.builder()
+				.result(StagedResult.builder()
+					.processType("web", "test-command")
+					.build())
+				.id("test-droplet-id")
+				.build()));
+
 		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
 			.id("test-task-id")
 			.build()));
@@ -214,10 +223,18 @@ public class CloudFoundryTaskLauncherTests {
 			.id("test-droplet-id")
 			.build()));
 
-		givenRequestGetDroplet("test-droplet-id", Mono.just(GetDropletResponse.builder()
-			.id("test-droplet-id")
-			.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-			.build()));
+		givenRequestGetDroplet("test-droplet-id",
+			Mono.just(GetDropletResponse.builder()
+				.id("test-droplet-id")
+				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
+				.build()),
+			Mono.just(GetDropletResponse.builder()
+				.result(StagedResult.builder()
+					.processType("web", "test-command")
+					.build())
+				.id("test-droplet-id")
+				.build())
+			);
 
 		givenRequestListServiceInstances(Flux.empty());
 
@@ -516,10 +533,17 @@ public class CloudFoundryTaskLauncherTests {
 			.id("test-droplet-id")
 			.build()));
 
-		givenRequestGetDroplet("test-droplet-id", Mono.just(GetDropletResponse.builder()
-			.id("test-droplet-id")
-			.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-			.build()));
+		givenRequestGetDroplet("test-droplet-id",
+			Mono.just(GetDropletResponse.builder()
+				.id("test-droplet-id")
+				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
+				.build()),
+			Mono.just(GetDropletResponse.builder()
+				.result(StagedResult.builder()
+					.processType("web", "test-command")
+					.build())
+				.id("test-droplet-id")
+				.build()));
 
 		givenRequestListServiceInstances(Flux.empty());
 
@@ -581,10 +605,17 @@ public class CloudFoundryTaskLauncherTests {
 			.id("test-droplet-id")
 			.build()));
 
-		givenRequestGetDroplet("test-droplet-id", Mono.just(GetDropletResponse.builder()
-			.id("test-droplet-id")
-			.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-			.build()));
+		givenRequestGetDroplet("test-droplet-id",
+			Mono.just(GetDropletResponse.builder()
+				.id("test-droplet-id")
+				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
+				.build()),
+			Mono.just(GetDropletResponse.builder()
+				.result(StagedResult.builder()
+					.processType("web", "test-command")
+					.build())
+				.id("test-droplet-id")
+				.build()));
 
 		givenRequestListServiceInstances(Flux.just(ServiceInstance.builder()
 				.id("test-service-instance-id-1")
@@ -664,10 +695,17 @@ public class CloudFoundryTaskLauncherTests {
 			.id("test-droplet-id")
 			.build()));
 
-		givenRequestGetDroplet("test-droplet-id", Mono.just(GetDropletResponse.builder()
-			.id("test-droplet-id")
-			.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-			.build()));
+		givenRequestGetDroplet("test-droplet-id",
+			Mono.just(GetDropletResponse.builder()
+				.id("test-droplet-id")
+				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
+				.build()),
+			Mono.just(GetDropletResponse.builder()
+				.result(StagedResult.builder()
+					.processType("web", "test-command")
+					.build())
+				.id("test-droplet-id")
+				.build()));
 
 		givenRequestListServiceInstances(Flux.just(ServiceInstance.builder()
 				.id("test-service-instance-id-1")
@@ -832,12 +870,12 @@ public class CloudFoundryTaskLauncherTests {
 			.willReturn(response);
 	}
 
-	private void givenRequestGetDroplet(String dropletId, Mono<GetDropletResponse> response) {
+	private void givenRequestGetDroplet(String dropletId, Mono<GetDropletResponse> response, Mono<GetDropletResponse>... responses) {
 		given(this.client.droplets()
 			.get(GetDropletRequest.builder()
 				.dropletId(dropletId)
 				.build()))
-			.willReturn(response);
+			.willReturn(response, responses);
 	}
 
 	private void givenRequestGetPackage(String packageId, Mono<GetPackageResponse> response) {

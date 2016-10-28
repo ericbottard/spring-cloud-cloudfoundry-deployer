@@ -53,15 +53,16 @@ import org.cloudfoundry.operations.applications.StartApplicationRequest;
 import org.cloudfoundry.operations.services.BindServiceInstanceRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.Yaml;
+import reactor.core.Exceptions;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.app.AppStatus;
 import org.springframework.cloud.deployer.spi.app.DeploymentState;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.util.StringUtils;
-import org.yaml.snakeyaml.Yaml;
-import reactor.core.Exceptions;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 /**
  * A deployer that targets Cloud Foundry using the public API.
@@ -73,8 +74,6 @@ import reactor.core.publisher.Mono;
 public class CloudFoundryAppDeployer implements AppDeployer {
 
 	private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-	private static final Yaml YAML = new Yaml();
 
 	private static final Logger logger = LoggerFactory.getLogger(CloudFoundryTaskLauncher.class);
 
@@ -99,14 +98,17 @@ public class CloudFoundryAppDeployer implements AppDeployer {
 		String deploymentId = deploymentId(request);
 
 		getStatus(deploymentId)
-			.doOnNext(status -> assertApplicationDoesNotExist(deploymentId, status))
+				.doOnNext(status -> assertApplicationDoesNotExist(deploymentId, status))
+				// Need to block here to be able to throw exception early
+				.block(Duration.ofSeconds(this.deploymentProperties.getTaskTimeout()));
+		Mono.empty()
 			.then(pushApplication(deploymentId, request))
 			.then(setEnvironmentVariables(deploymentId, getEnvironmentVariables(deploymentId, request)))
 			.then(bindServices(deploymentId, request))
 			.then(startApplication(deploymentId))
 			.timeout(Duration.ofSeconds(this.deploymentProperties.getTaskTimeout()))
-			.doOnSuccess(v -> logger.info("Successfully deployed {}", request))
-			.doOnError(e -> logger.error(String.format("Failed to deploy %s", request), e))
+			.doOnSuccess(v -> logger.info("Successfully deployed {}", deploymentId))
+			.doOnError(e -> logger.error(String.format("Failed to deploy %s", deploymentId), e))
 			.subscribe();
 
 		return deploymentId;
@@ -226,7 +228,7 @@ public class CloudFoundryAppDeployer implements AppDeployer {
 
 		String argumentsAsString = request.getCommandlineArguments().stream()
 			.collect(Collectors.joining(" "));
-		String yaml = YAML.dump(Collections.singletonMap("arguments", argumentsAsString));
+		String yaml = new Yaml().dump(Collections.singletonMap("arguments", argumentsAsString));
 
 		return Collections.singletonMap("JBP_CONFIG_JAVA_MAIN", yaml);
 	}

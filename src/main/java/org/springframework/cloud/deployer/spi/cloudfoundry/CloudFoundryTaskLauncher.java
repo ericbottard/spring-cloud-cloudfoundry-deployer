@@ -28,12 +28,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.cloudfoundry.client.CloudFoundryClient;
+import org.cloudfoundry.client.v2.CloudFoundryException;
 import org.cloudfoundry.client.v3.BuildpackData;
 import org.cloudfoundry.client.v3.Lifecycle;
 import org.cloudfoundry.client.v3.Relationship;
@@ -76,15 +78,16 @@ import org.cloudfoundry.util.DelayUtils;
 import org.cloudfoundry.util.PaginationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.Exceptions;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 import org.springframework.cloud.deployer.spi.core.AppDefinition;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.task.LaunchState;
 import org.springframework.cloud.deployer.spi.task.TaskLauncher;
 import org.springframework.cloud.deployer.spi.task.TaskStatus;
 import org.springframework.util.StringUtils;
-import reactor.core.Exceptions;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 /**
  * {@link TaskLauncher} implementation for CloudFoundry.  When a task is launched, if it has not previously been
@@ -156,8 +159,10 @@ public class CloudFoundryTaskLauncher implements TaskLauncher {
 	 */
 	@Override
 	public TaskStatus status(String id) {
+		BiFunction<Throwable, String, Mono<TaskStatus>> recoverFrom404 = this::toTaskStatus;
 		return requestGetTask(id)
 			.map(this::toTaskStatus)
+			.otherwise(e -> recoverFrom404.apply(e, id))
 			.doOnSuccess(r -> logger.info("Task {} status successful", id))
 			.doOnError(t -> logger.error(String.format("Task %s status failed", id), t))
 			.block(Duration.ofSeconds(this.deploymentProperties.getTaskTimeout()));
@@ -211,8 +216,9 @@ public class CloudFoundryTaskLauncher implements TaskLauncher {
 
 	private String getCommand(Droplet droplet, AppDeploymentRequest request) {
 		String defaultCommand = ((StagedResult) droplet.getResult()).getProcessTypes().get("web");
-		return Stream.concat(Stream.of(defaultCommand), request.getCommandlineArguments().stream())
-			.collect(Collectors.joining(" "));
+		String command = Stream.concat(Stream.of(defaultCommand), request.getCommandlineArguments().stream())
+				.collect(Collectors.joining(" "));
+		return command;
 	}
 
 	private int getDisk(AppDeploymentRequest request) {
@@ -221,9 +227,12 @@ public class CloudFoundryTaskLauncher implements TaskLauncher {
 			.orElse(this.deploymentProperties.getDisk());
 	}
 
-	private Mono<DropletResource> getDroplet(String applicationId) {
+	private Mono<GetDropletResponse> getDroplet(String applicationId) {
 		return requestListDroplets(applicationId)
-			.single();
+				.single()
+				.map(DropletResource::getId)
+				// LISTing then GETting is currently necessary, as the listing redacts some information in its results
+				.then(this::requestGetDroplet);
 	}
 
 	private Map<String, String> getEnvironmentVariables(Map<String, String> properties) {
@@ -395,6 +404,16 @@ public class CloudFoundryTaskLauncher implements TaskLauncher {
 				.bits(bits)
 				.packageId(packageId)
 				.build());
+	}
+
+	private Mono<TaskStatus> toTaskStatus(Throwable throwable, String id) {
+		if ((throwable instanceof CloudFoundryException)
+			&& ((CloudFoundryException) throwable).getCode() == 10010) {
+			return Mono.just(new TaskStatus(id, LaunchState.unknown, null));
+		}
+		else {
+			return Mono.error(throwable);
+		}
 	}
 
 	private TaskStatus toTaskStatus(GetTaskResponse response) {
