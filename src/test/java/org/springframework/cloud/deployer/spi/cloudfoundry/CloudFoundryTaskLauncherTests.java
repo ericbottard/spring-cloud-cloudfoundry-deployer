@@ -28,40 +28,10 @@ import java.util.Collections;
 import java.util.Map;
 
 import org.cloudfoundry.client.CloudFoundryClient;
-import org.cloudfoundry.client.v3.BuildpackData;
-import org.cloudfoundry.client.v3.Lifecycle;
-import org.cloudfoundry.client.v3.Pagination;
-import org.cloudfoundry.client.v3.Relationship;
-import org.cloudfoundry.client.v3.Type;
-import org.cloudfoundry.client.v3.applications.ApplicationResource;
-import org.cloudfoundry.client.v3.applications.ApplicationsV3;
-import org.cloudfoundry.client.v3.applications.CreateApplicationRequest;
-import org.cloudfoundry.client.v3.applications.CreateApplicationResponse;
-import org.cloudfoundry.client.v3.applications.ListApplicationDropletsRequest;
-import org.cloudfoundry.client.v3.applications.ListApplicationDropletsResponse;
-import org.cloudfoundry.client.v3.applications.ListApplicationsRequest;
-import org.cloudfoundry.client.v3.applications.ListApplicationsResponse;
-import org.cloudfoundry.client.v3.droplets.DropletResource;
-import org.cloudfoundry.client.v3.droplets.Droplets;
-import org.cloudfoundry.client.v3.droplets.GetDropletRequest;
-import org.cloudfoundry.client.v3.droplets.GetDropletResponse;
-import org.cloudfoundry.client.v3.droplets.StagedResult;
-import org.cloudfoundry.client.v3.packages.CreatePackageRequest;
-import org.cloudfoundry.client.v3.packages.CreatePackageResponse;
-import org.cloudfoundry.client.v3.packages.GetPackageRequest;
-import org.cloudfoundry.client.v3.packages.GetPackageResponse;
-import org.cloudfoundry.client.v3.packages.PackageType;
-import org.cloudfoundry.client.v3.packages.Packages;
-import org.cloudfoundry.client.v3.packages.StagePackageRequest;
-import org.cloudfoundry.client.v3.packages.StagePackageResponse;
-import org.cloudfoundry.client.v3.packages.State;
-import org.cloudfoundry.client.v3.packages.UploadPackageRequest;
-import org.cloudfoundry.client.v3.packages.UploadPackageResponse;
-import org.cloudfoundry.client.v3.servicebindings.CreateServiceBindingRequest;
-import org.cloudfoundry.client.v3.servicebindings.CreateServiceBindingResponse;
-import org.cloudfoundry.client.v3.servicebindings.Relationships;
-import org.cloudfoundry.client.v3.servicebindings.ServiceBindingType;
-import org.cloudfoundry.client.v3.servicebindings.ServiceBindingsV3;
+import org.cloudfoundry.client.v2.applications.ApplicationsV2;
+import org.cloudfoundry.client.v2.applications.SummaryApplicationResponse;
+import org.cloudfoundry.client.v2.applications.UpdateApplicationRequest;
+import org.cloudfoundry.client.v2.applications.UpdateApplicationResponse;
 import org.cloudfoundry.client.v3.tasks.CancelTaskRequest;
 import org.cloudfoundry.client.v3.tasks.CancelTaskResponse;
 import org.cloudfoundry.client.v3.tasks.CreateTaskRequest;
@@ -70,25 +40,32 @@ import org.cloudfoundry.client.v3.tasks.GetTaskRequest;
 import org.cloudfoundry.client.v3.tasks.GetTaskResponse;
 import org.cloudfoundry.client.v3.tasks.Tasks;
 import org.cloudfoundry.operations.CloudFoundryOperations;
+import org.cloudfoundry.operations.applications.ApplicationDetail;
+import org.cloudfoundry.operations.applications.ApplicationHealthCheck;
+import org.cloudfoundry.operations.applications.ApplicationSummary;
+import org.cloudfoundry.operations.applications.Applications;
+import org.cloudfoundry.operations.applications.GetApplicationRequest;
+import org.cloudfoundry.operations.applications.PushApplicationRequest;
+import org.cloudfoundry.operations.applications.StartApplicationRequest;
+import org.cloudfoundry.operations.applications.StopApplicationRequest;
+import org.cloudfoundry.operations.services.BindServiceInstanceRequest;
 import org.cloudfoundry.operations.services.ServiceInstance;
 import org.cloudfoundry.operations.services.ServiceInstanceType;
 import org.cloudfoundry.operations.services.Services;
-import org.cloudfoundry.operations.spaces.GetSpaceRequest;
-import org.cloudfoundry.operations.spaces.SpaceDetail;
 import org.cloudfoundry.operations.spaces.Spaces;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-
 import org.springframework.cloud.deployer.spi.core.AppDefinition;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
 import org.springframework.cloud.deployer.spi.task.LaunchState;
 import org.springframework.cloud.deployer.spi.task.TaskStatus;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 /**
  * @author Michael Minella
@@ -99,13 +76,13 @@ public class CloudFoundryTaskLauncherTests {
 	private final CloudFoundryDeploymentProperties deploymentProperties = new CloudFoundryDeploymentProperties();
 
 	@Mock(answer = Answers.RETURNS_SMART_NULLS)
-	private ApplicationsV3 applicationsV3;
+	private Applications applications;
+
+	@Mock(answer = Answers.RETURNS_SMART_NULLS)
+	private ApplicationsV2 applicationsV2;
 
 	@Mock(answer = Answers.RETURNS_SMART_NULLS)
 	private CloudFoundryClient client;
-
-	@Mock(answer = Answers.RETURNS_SMART_NULLS)
-	private Droplets droplets;
 
 	@Mock(answer = Answers.RETURNS_SMART_NULLS)
 	private InputStream inputStream;
@@ -114,15 +91,6 @@ public class CloudFoundryTaskLauncherTests {
 
 	@Mock(answer = Answers.RETURNS_SMART_NULLS)
 	private CloudFoundryOperations operations;
-
-	@Mock(answer = Answers.RETURNS_SMART_NULLS)
-	private Packages packages;
-
-	@Mock(answer = Answers.RETURNS_SMART_NULLS)
-	private Resource resource;
-
-	@Mock(answer = Answers.RETURNS_SMART_NULLS)
-	private ServiceBindingsV3 serviceBindingsV3;
 
 	@Mock(answer = Answers.RETURNS_SMART_NULLS)
 	private Services services;
@@ -145,41 +113,29 @@ public class CloudFoundryTaskLauncherTests {
 
 	@Test
 	public void launchTaskApplicationExists() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(ApplicationResource.builder()
-				.id("test-application-id")
-				.build())
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.just(ApplicationSummary.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
 			.build()));
 
-		givenRequestListDroplets("test-application-id", Mono.just(ListApplicationDropletsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(DropletResource.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
+		givenRequestGetApplicationSummary("test-application-id", Mono.just(SummaryApplicationResponse.builder()
+			.id("test-application-id")
+			.detectedStartCommand("test-command")
 			.build()));
 
-		givenRequestGetDroplet("test-droplet-id",
-			Mono.just(GetDropletResponse.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build()));
-
-		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
+		givenRequestCreateTask("test-application-id", "test-command", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
 			.id("test-task-id")
 			.build()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		String taskId = this.launcher.launch(request);
 
@@ -187,435 +143,381 @@ public class CloudFoundryTaskLauncherTests {
 	}
 
 	@Test
-	public void launchTaskWithNonExistentApplication() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
+	public void launchTaskWithNonExistentApplication() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
 			.build()));
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.just(StagePackageResponse.builder()
-			.id("test-droplet-id")
-			.build()));
-
-		givenRequestGetDroplet("test-droplet-id",
-			Mono.just(GetDropletResponse.builder()
-				.id("test-droplet-id")
-				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-				.build()),
-			Mono.just(GetDropletResponse.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
-			);
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
 
 		givenRequestListServiceInstances(Flux.empty());
 
-		givenRequestListDroplets("test-application-id", Mono.just(ListApplicationDropletsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(DropletResource.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
+
+		givenRequestStopApplication("test-application", Mono.empty());
+
+		givenRequestGetApplicationSummary("test-application-id", Mono.just(SummaryApplicationResponse.builder()
+			.id("test-application-id")
+			.detectedStartCommand("test-command")
 			.build()));
 
-		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
+		givenRequestCreateTask("test-application-id", "test-command", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
 			.id("test-task-id")
 			.build()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		String taskId = this.launcher.launch(request);
 
 		assertThat(taskId, equalTo("test-task-id"));
-	}
-
-	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndApplicationCreationFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
-			.build()));
-
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.error(new UnsupportedOperationException()));
-
-		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
-
-		this.launcher.launch(request);
 	}
 
 	@Test(expected = UnsupportedOperationException.class)
 	public void launchTaskWithNonExistentApplicationAndApplicationListingFails() {
-		givenRequestListApplications("test-application", Mono.error(new UnsupportedOperationException()));
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.error(new UnsupportedOperationException()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		this.launcher.launch(request);
 	}
 
 	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndBindingFails() {
+	public void launchTaskWithNonExistentApplicationAndListingServiceFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
 
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
 			.build()));
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
 
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.just(StagePackageResponse.builder()
-			.id("test-droplet-id")
-			.build()));
-
-		givenRequestGetDroplet("test-droplet-id", Mono.just(GetDropletResponse.builder()
-			.id("test-droplet-id")
-			.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-			.build()));
-
-		givenRequestListServiceInstances(Flux.just(ServiceInstance.builder()
-				.id("test-service-instance-id-1")
-				.name("test-service-instance-1")
-				.type(ServiceInstanceType.MANAGED)
-				.build(),
-			ServiceInstance.builder()
-				.id("test-service-instance-id-2")
-				.name("test-service-instance-2")
-				.type(ServiceInstanceType.MANAGED)
-				.build()));
-
-		givenRequestCreateServiceBinding("test-application-id", "test-service-instance-id-2", Mono.error(new UnsupportedOperationException()));
+		givenRequestListServiceInstances(Flux.error(new UnsupportedOperationException()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource,
-			Collections.singletonMap(CloudFoundryDeploymentProperties.SERVICES_PROPERTY_KEY, "test-service-instance-2"));
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		this.launcher.launch(request);
 	}
 
 	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndDropletCreationFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
-			.build()));
+	public void launchTaskWithNonExistentApplicationAndPushFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
+		givenRequestListApplications(Flux.empty());
 
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.error(new UnsupportedOperationException()));
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.error(new UnsupportedOperationException()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		this.launcher.launch(request);
 	}
 
 	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndPackageCreationFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
+	public void launchTaskWithNonExistentApplicationAndRetrievingApplicationSummaryFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
 			.build()));
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.error(new UnsupportedOperationException()));
-
-		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
-
-		this.launcher.launch(request);
-	}
-
-	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndPackageStatusFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
-			.build()));
-
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.error(new UnsupportedOperationException()));
-
-		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
-
-		this.launcher.launch(request);
-	}
-
-	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndPackageUploadFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
-			.build()));
-
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.error(new UnsupportedOperationException()));
-
-		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
-
-		this.launcher.launch(request);
-	}
-
-	@Test(expected = UnsupportedOperationException.class)
-	public void launchTaskWithNonExistentApplicationAndTaskCreationFails() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
-			.build()));
-
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.just(StagePackageResponse.builder()
-			.id("test-droplet-id")
-			.build()));
-
-		givenRequestGetDroplet("test-droplet-id",
-			Mono.just(GetDropletResponse.builder()
-				.id("test-droplet-id")
-				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-				.build()),
-			Mono.just(GetDropletResponse.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build()));
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
 
 		givenRequestListServiceInstances(Flux.empty());
 
-		givenRequestListDroplets("test-application-id", Mono.just(ListApplicationDropletsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(DropletResource.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
-			.build()));
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
 
-		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application",
-			Mono.error(new UnsupportedOperationException()));
+		givenRequestStopApplication("test-application", Mono.empty());
+
+		givenRequestGetApplicationSummary("test-application-id", Mono.error(new UnsupportedOperationException()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource, Collections.emptyMap());
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
+
+		this.launcher.launch(request);
+	}
+
+	@Test(expected = UnsupportedOperationException.class)
+	public void launchTaskWithNonExistentApplicationAndStartingApplicationFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
+			.build()));
+
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
+
+		givenRequestListServiceInstances(Flux.empty());
+
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.error(new UnsupportedOperationException
+			()));
+
+		AppDefinition definition = new AppDefinition("test-application", null);
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
+
+		this.launcher.launch(request);
+	}
+
+	@Test(expected = UnsupportedOperationException.class)
+	public void launchTaskWithNonExistentApplicationAndStoppingApplicationFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
+			.build()));
+
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
+
+		givenRequestListServiceInstances(Flux.empty());
+
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
+
+		givenRequestStopApplication("test-application", Mono.error(new UnsupportedOperationException()));
+
+		AppDefinition definition = new AppDefinition("test-application", null);
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
+
+		this.launcher.launch(request);
+	}
+
+	@Test(expected = UnsupportedOperationException.class)
+	public void launchTaskWithNonExistentApplicationAndTaskCreationFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
+			.build()));
+
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
+
+		givenRequestListServiceInstances(Flux.empty());
+
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
+
+		givenRequestStopApplication("test-application", Mono.empty());
+
+		givenRequestGetApplicationSummary("test-application-id", Mono.just(SummaryApplicationResponse.builder()
+			.id("test-application-id")
+			.detectedStartCommand("test-command")
+			.build()));
+
+		givenRequestCreateTask("test-application-id", "test-command", this.deploymentProperties.getMemory(), "test-application", Mono.error(new UnsupportedOperationException()));
+
+		AppDefinition definition = new AppDefinition("test-application", null);
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
+
+		this.launcher.launch(request);
+	}
+
+	@Test(expected = UnsupportedOperationException.class)
+	public void launchTaskWithNonExistentApplicationAndUpdatingApplicationFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
+			.build()));
+
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.error(new UnsupportedOperationException()));
+
+		AppDefinition definition = new AppDefinition("test-application", null);
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
 
 		this.launcher.launch(request);
 	}
 
 	@Test
-	public void launchTaskWithNonExistentApplicationBindingOneService() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
+	public void launchTaskWithNonExistentApplicationBindingOneService() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
 			.build()));
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.just(StagePackageResponse.builder()
-			.id("test-droplet-id")
-			.build()));
-
-		givenRequestGetDroplet("test-droplet-id",
-			Mono.just(GetDropletResponse.builder()
-				.id("test-droplet-id")
-				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-				.build()),
-			Mono.just(GetDropletResponse.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build()));
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
 
 		givenRequestListServiceInstances(Flux.just(ServiceInstance.builder()
 				.id("test-service-instance-id-1")
@@ -628,84 +530,61 @@ public class CloudFoundryTaskLauncherTests {
 				.type(ServiceInstanceType.MANAGED)
 				.build()));
 
-		givenRequestCreateServiceBinding("test-application-id", "test-service-instance-id-2", Mono.just(CreateServiceBindingResponse.builder()
-			.id("test-service-binding-id-2")
+		givenRequestBindService("test-application", "test-service-instance-2", Mono.empty());
+
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
+
+		givenRequestStopApplication("test-application", Mono.empty());
+
+		givenRequestGetApplicationSummary("test-application-id", Mono.just(SummaryApplicationResponse.builder()
+			.id("test-application-id")
+			.detectedStartCommand("test-command")
 			.build()));
 
-		givenRequestListDroplets("test-application-id", Mono.just(ListApplicationDropletsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(DropletResource.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
-			.build()));
-
-		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
+		givenRequestCreateTask("test-application-id", "test-command", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
 			.id("test-task-id")
 			.build()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource,
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource,
 			Collections.singletonMap(CloudFoundryDeploymentProperties.SERVICES_PROPERTY_KEY, "test-service-instance-2"));
 
 		String taskId = this.launcher.launch(request);
 
 		assertThat(taskId, equalTo("test-task-id"));
-		verifyRequestCreateServiceBinding("test-application-id", "test-service-instance-id-2");
+		verifyRequestBindService("test-application", "test-service-instance-2");
 	}
 
 	@Test
-	public void launchTaskWithNonExistentApplicationBindingThreeServices() {
-		givenRequestListApplications("test-application", Mono.just(ListApplicationsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(0)
-				.build())
-			.resource()
+	public void launchTaskWithNonExistentApplicationBindingThreeServices() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
 			.build()));
 
-		givenRequestSpace("test-space", Mono.just(SpaceDetail.builder()
-			.id("test-space-id")
-			.name("test-name")
-			.organization("test-organization")
-			.build()));
-
-		givenRequestCreateApplication(this.deploymentProperties.getBuildpack(), Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), "test-application", "test-space-id",
-			Mono.just(CreateApplicationResponse.builder()
-				.id("test-application-id")
-				.build()));
-
-		givenRequestCreatePackage("test-application-id", Mono.just(CreatePackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestUploadPackage(this.inputStream, "test-package-id", Mono.just(UploadPackageResponse.builder()
-			.id("test-package-id")
-			.build()));
-
-		givenRequestGetPackage("test-package-id", Mono.just(GetPackageResponse.builder()
-			.id("test-package-id")
-			.state(State.READY)
-			.build()));
-
-		givenRequestStagePackage(this.deploymentProperties.getDisk(), this.deploymentProperties.getMemory(), "test-package-id", Mono.just(StagePackageResponse.builder()
-			.id("test-droplet-id")
-			.build()));
-
-		givenRequestGetDroplet("test-droplet-id",
-			Mono.just(GetDropletResponse.builder()
-				.id("test-droplet-id")
-				.state(org.cloudfoundry.client.v3.droplets.State.STAGED)
-				.build()),
-			Mono.just(GetDropletResponse.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build()));
+		givenRequestUpdateApplication("test-application-id", Collections.singletonMap("SPRING_APPLICATION_JSON", "{}"), Mono.empty());
 
 		givenRequestListServiceInstances(Flux.just(ServiceInstance.builder()
 				.id("test-service-instance-id-1")
@@ -723,59 +602,72 @@ public class CloudFoundryTaskLauncherTests {
 				.type(ServiceInstanceType.MANAGED)
 				.build()));
 
-		givenRequestCreateServiceBinding("test-application-id", "test-service-instance-id-1", Mono.just(CreateServiceBindingResponse.builder()
-			.id("test-service-binding-id-1")
+		givenRequestBindService("test-application", "test-service-instance-1", Mono.empty());
+
+		givenRequestBindService("test-application", "test-service-instance-2", Mono.empty());
+
+		givenRequestBindService("test-application", "test-service-instance-3", Mono.empty());
+
+		givenRequestStartApplication("test-application", this.deploymentProperties.getStagingTimeout(), this.deploymentProperties.getStagingTimeout(), Mono.empty());
+
+		givenRequestStopApplication("test-application", Mono.empty());
+
+		givenRequestGetApplicationSummary("test-application-id", Mono.just(SummaryApplicationResponse.builder()
+			.id("test-application-id")
+			.detectedStartCommand("test-command")
 			.build()));
 
-		givenRequestCreateServiceBinding("test-application-id", "test-service-instance-id-2", Mono.just(CreateServiceBindingResponse.builder()
-			.id("test-service-binding-id-2")
-			.build()));
-
-		givenRequestCreateServiceBinding("test-application-id", "test-service-instance-id-3", Mono.just(CreateServiceBindingResponse.builder()
-			.id("test-service-binding-id-3")
-			.build()));
-
-		givenRequestListDroplets("test-application-id", Mono.just(ListApplicationDropletsResponse.builder()
-			.pagination(Pagination.builder()
-				.totalResults(1)
-				.build())
-			.resource(DropletResource.builder()
-				.result(StagedResult.builder()
-					.processType("web", "test-command")
-					.build())
-				.id("test-droplet-id")
-				.build())
-			.build()));
-
-		givenRequestCreateTask("test-application-id", "test-command", "test-droplet-id", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
+		givenRequestCreateTask("test-application-id", "test-command", this.deploymentProperties.getMemory(), "test-application", Mono.just(CreateTaskResponse.builder()
 			.id("test-task-id")
 			.build()));
 
 		AppDefinition definition = new AppDefinition("test-application", null);
-		AppDeploymentRequest request = new AppDeploymentRequest(definition, this.resource,
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource,
 			Collections.singletonMap(CloudFoundryDeploymentProperties.SERVICES_PROPERTY_KEY, "test-service-instance-1,test-service-instance-2,test-service-instance-3"));
 
 		String taskId = this.launcher.launch(request);
 
 		assertThat(taskId, equalTo("test-task-id"));
-		verifyRequestCreateServiceBinding("test-application-id", "test-service-instance-id-1");
-		verifyRequestCreateServiceBinding("test-application-id", "test-service-instance-id-2");
-		verifyRequestCreateServiceBinding("test-application-id", "test-service-instance-id-3");
+		verifyRequestBindService("test-application", "test-service-instance-1");
+		verifyRequestBindService("test-application", "test-service-instance-2");
+		verifyRequestBindService("test-application", "test-service-instance-3");
+	}
+
+	@Test(expected = UnsupportedOperationException.class)
+	public void launchTaskWithNonExistentApplicationRetrievalFails() throws IOException {
+		Resource resource = new FileSystemResource("src/test/resources/demo-0.0.1-SNAPSHOT.jar");
+
+		givenRequestListApplications(Flux.empty());
+
+		givenRequestPushApplication(PushApplicationRequest.builder()
+			.application(resource.getFile().toPath())
+			.buildpack("https://github.com/cloudfoundry/java-buildpack.git")
+			.command("/bin/nc -l $PORT")
+			.diskQuota(this.deploymentProperties.getDisk())
+			.healthCheckType(ApplicationHealthCheck.NONE)
+			.memory(this.deploymentProperties.getMemory())
+			.name("test-application")
+			.noRoute(true)
+			.noStart(true)
+			.build(), Mono.empty());
+
+		givenRequestGetApplication("test-application", Mono.error(new UnsupportedOperationException()));
+
+		AppDefinition definition = new AppDefinition("test-application", null);
+		AppDeploymentRequest request = new AppDeploymentRequest(definition, resource, Collections.emptyMap());
+
+		this.launcher.launch(request);
 	}
 
 	@Before
 	public void setUp() throws IOException {
 		MockitoAnnotations.initMocks(this);
-		given(this.client.applicationsV3()).willReturn(this.applicationsV3);
-		given(this.client.droplets()).willReturn(this.droplets);
-		given(this.client.packages()).willReturn(this.packages);
-		given(this.client.serviceBindingsV3()).willReturn(this.serviceBindingsV3);
+		given(this.client.applicationsV2()).willReturn(this.applicationsV2);
 		given(this.client.tasks()).willReturn(this.tasks);
 
+		given(this.operations.applications()).willReturn(this.applications);
 		given(this.operations.services()).willReturn(this.services);
 		given(this.operations.spaces()).willReturn(this.spaces);
-
-		given(this.resource.getInputStream()).willReturn(this.inputStream);
 
 		this.deploymentProperties.setTaskTimeout(1);
 		this.launcher = new CloudFoundryTaskLauncher(this.client, this.deploymentProperties, this.operations, "test-space");
@@ -805,6 +697,15 @@ public class CloudFoundryTaskLauncherTests {
 		this.launcher.status("test-task-id");
 	}
 
+	private void givenRequestBindService(String applicationName, String serviceInstanceName, Mono<Void> response) {
+		given(this.operations.services()
+			.bind(BindServiceInstanceRequest.builder()
+				.applicationName(applicationName)
+				.serviceInstanceName(serviceInstanceName)
+				.build()))
+			.willReturn(response);
+	}
+
 	private void givenRequestCancelTask(String taskId, Mono<CancelTaskResponse> response) {
 		given(this.client.tasks()
 			.cancel(CancelTaskRequest.builder()
@@ -813,75 +714,29 @@ public class CloudFoundryTaskLauncherTests {
 			.willReturn(response);
 	}
 
-	private void givenRequestCreateApplication(String buildpack, Map<String, String> environmentVariables, String name, String spaceId, Mono<CreateApplicationResponse> response) {
-		given(this.client.applicationsV3()
-			.create(CreateApplicationRequest.builder()
-				.environmentVariables(environmentVariables)
-				.lifecycle(Lifecycle.builder()
-					.type(Type.BUILDPACK)
-					.data(BuildpackData.builder()
-						.buildpack(buildpack)
-						.build())
-					.build())
-				.name(name)
-				.relationships(org.cloudfoundry.client.v3.applications.Relationships.builder()
-					.space(Relationship.builder()
-						.id(spaceId)
-						.build())
-					.build())
-				.build()))
-			.willReturn(response);
-	}
-
-	private void givenRequestCreatePackage(String applicationId, Mono<CreatePackageResponse> response) {
-		given(this.client.packages()
-			.create(CreatePackageRequest.builder()
-				.applicationId(applicationId)
-				.type(PackageType.BITS)
-				.build()))
-			.willReturn(response);
-	}
-
-	private void givenRequestCreateServiceBinding(String applicationId, String serviceInstanceId, Mono<CreateServiceBindingResponse> response) {
-		given(this.client.serviceBindingsV3()
-			.create(CreateServiceBindingRequest.builder()
-				.relationships(Relationships.builder()
-					.application(Relationship.builder()
-						.id(applicationId)
-						.build())
-					.serviceInstance(Relationship.builder()
-						.id(serviceInstanceId)
-						.build())
-					.build())
-				.type(ServiceBindingType.APPLICATION)
-				.build()))
-			.willReturn(response);
-	}
-
-	private void givenRequestCreateTask(String applicationId, String command, String dropletId, int memory, String name, Mono<CreateTaskResponse> response) {
+	private void givenRequestCreateTask(String applicationId, String command, int memory, String name, Mono<CreateTaskResponse> response) {
 		given(this.client.tasks()
 			.create(CreateTaskRequest.builder()
 				.applicationId(applicationId)
 				.command(command)
-				.dropletId(dropletId)
 				.memoryInMb(memory)
 				.name(name)
 				.build()))
 			.willReturn(response);
 	}
 
-	private void givenRequestGetDroplet(String dropletId, Mono<GetDropletResponse> response, Mono<GetDropletResponse>... responses) {
-		given(this.client.droplets()
-			.get(GetDropletRequest.builder()
-				.dropletId(dropletId)
+	private void givenRequestGetApplication(String name, Mono<ApplicationDetail> response) {
+		given(this.operations.applications()
+			.get(GetApplicationRequest.builder()
+				.name(name)
 				.build()))
-			.willReturn(response, responses);
+			.willReturn(response);
 	}
 
-	private void givenRequestGetPackage(String packageId, Mono<GetPackageResponse> response) {
-		given(this.client.packages()
-			.get(GetPackageRequest.builder()
-				.packageId(packageId)
+	private void givenRequestGetApplicationSummary(String applicationId, Mono<SummaryApplicationResponse> response) {
+		given(this.client.applicationsV2()
+			.summary(org.cloudfoundry.client.v2.applications.SummaryApplicationRequest.builder()
+				.applicationId(applicationId)
 				.build()))
 			.willReturn(response);
 	}
@@ -894,21 +749,9 @@ public class CloudFoundryTaskLauncherTests {
 			.willReturn(response);
 	}
 
-	private void givenRequestListApplications(String name, Mono<ListApplicationsResponse> response) {
-		given(this.client.applicationsV3()
-			.list(ListApplicationsRequest.builder()
-				.name(name)
-				.page(1)
-				.build()))
-			.willReturn(response);
-	}
-
-	private void givenRequestListDroplets(String applicationId, Mono<ListApplicationDropletsResponse> response) {
-		given(this.client.applicationsV3()
-			.listDroplets(ListApplicationDropletsRequest.builder()
-				.applicationId(applicationId)
-				.page(1)
-				.build()))
+	private void givenRequestListApplications(Flux<ApplicationSummary> response) {
+		given(this.operations.applications()
+			.list())
 			.willReturn(response);
 	}
 
@@ -918,45 +761,44 @@ public class CloudFoundryTaskLauncherTests {
 			.willReturn(response);
 	}
 
-	private void givenRequestSpace(String space, Mono<SpaceDetail> response) {
-		given(this.operations.spaces()
-			.get(GetSpaceRequest.builder()
-				.name(space)
+	private void givenRequestPushApplication(PushApplicationRequest request, Mono<Void> response) {
+		given(this.operations.applications()
+			.push(request))
+			.willReturn(response);
+	}
+
+	private void givenRequestStartApplication(String name, Duration stagingTimeout, Duration startupTimeout, Mono<Void> response) {
+		given(this.operations.applications()
+			.start(StartApplicationRequest.builder()
+				.name(name)
+				.stagingTimeout(stagingTimeout)
+				.startupTimeout(startupTimeout)
 				.build()))
 			.willReturn(response);
 	}
 
-	private void givenRequestStagePackage(int disk, int memory, String packageId, Mono<StagePackageResponse> response) {
-		given(this.client.packages()
-			.stage(StagePackageRequest.builder()
-				.packageId(packageId)
-				.stagingDiskInMb(disk)
-				.stagingMemoryInMb(memory)
+	private void givenRequestStopApplication(String name, Mono<Void> response) {
+		given(this.operations.applications()
+			.stop(StopApplicationRequest.builder()
+				.name(name)
 				.build()))
 			.willReturn(response);
 	}
 
-	private void givenRequestUploadPackage(InputStream bits, String packageId, Mono<UploadPackageResponse> response) {
-		given(this.client.packages()
-			.upload(UploadPackageRequest.builder()
-				.bits(bits)
-				.packageId(packageId)
+	private void givenRequestUpdateApplication(String applicationId, Map<String, String> environmentVariables, Mono<UpdateApplicationResponse> response) {
+		given(this.client.applicationsV2()
+			.update(UpdateApplicationRequest.builder()
+				.applicationId(applicationId)
+				.environmentJsons(environmentVariables)
 				.build()))
 			.willReturn(response);
 	}
 
-	private void verifyRequestCreateServiceBinding(String applicationId, String serviceInstanceId) {
-		verify(this.client.serviceBindingsV3())
-			.create(CreateServiceBindingRequest.builder()
-				.relationships(Relationships.builder()
-					.application(Relationship.builder()
-						.id(applicationId)
-						.build())
-					.serviceInstance(Relationship.builder()
-						.id(serviceInstanceId)
-						.build())
-					.build())
-				.type(ServiceBindingType.APPLICATION)
+	private void verifyRequestBindService(String applicationName, String serviceInstanceName) {
+		verify(this.operations.services())
+			.bind(BindServiceInstanceRequest.builder()
+				.applicationName(applicationName)
+				.serviceInstanceName(serviceInstanceName)
 				.build());
 	}
 
