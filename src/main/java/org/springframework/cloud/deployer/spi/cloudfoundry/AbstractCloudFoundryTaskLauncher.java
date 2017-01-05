@@ -17,9 +17,11 @@
 package org.springframework.cloud.deployer.spi.cloudfoundry;
 
 import java.time.Duration;
+import java.util.List;
 
 import org.cloudfoundry.client.CloudFoundryClient;
-import org.cloudfoundry.client.v2.CloudFoundryException;
+import org.cloudfoundry.client.v2.ClientV2Exception;
+import org.cloudfoundry.client.v3.ClientV3Exception;
 import org.cloudfoundry.client.v3.tasks.CancelTaskRequest;
 import org.cloudfoundry.client.v3.tasks.CancelTaskResponse;
 import org.cloudfoundry.client.v3.tasks.GetTaskRequest;
@@ -83,16 +85,24 @@ abstract class AbstractCloudFoundryTaskLauncher extends AbstractCloudFoundryDepl
 	}
 
 	private Mono<TaskStatus> toTaskStatus(Throwable throwable, String id) {
-		if (!(throwable instanceof CloudFoundryException)) {
-			return Mono.error(throwable);
+		if (throwable instanceof ClientV2Exception) {
+			boolean isHttpNotFoundError = Integer.valueOf(10010).equals(((ClientV2Exception) throwable).getCode())
+				|| throwable.getCause() != null && "HTTP request failed with code: 404".equals(throwable.getCause().getMessage());
+			if (isHttpNotFoundError) {
+				return Mono.just(new TaskStatus(id, LaunchState.unknown, null));
+			}
 		}
-		boolean isHttpNotFoundError = Integer.valueOf(10010).equals(((CloudFoundryException) throwable).getCode())
-			|| throwable.getCause() != null && "HTTP request failed with code: 404".equals(throwable.getCause().getMessage());
-		if (isHttpNotFoundError) {
-			return Mono.just(new TaskStatus(id, LaunchState.unknown, null));
-		} else {
-			return Mono.error(throwable);
+		else if (throwable instanceof ClientV3Exception) {
+			List<ClientV3Exception.Error> errors = ((ClientV3Exception) throwable).getErrors();
+			if (errors.size() == 1) {
+				ClientV3Exception.Error error = errors.get(0);
+				boolean isHttpNotFoundError = Integer.valueOf(10010).equals(error.getCode());
+				if (isHttpNotFoundError) {
+					return Mono.just(new TaskStatus(id, LaunchState.unknown, null));
+				}
+			}
 		}
+		return Mono.error(throwable);
 	}
 
 	protected TaskStatus toTaskStatus(GetTaskResponse response) {
