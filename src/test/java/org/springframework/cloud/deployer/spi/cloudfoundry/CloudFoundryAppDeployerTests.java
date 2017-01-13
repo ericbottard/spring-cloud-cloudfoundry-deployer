@@ -53,6 +53,7 @@ import org.cloudfoundry.operations.applications.StartApplicationRequest;
 import org.cloudfoundry.operations.services.BindServiceInstanceRequest;
 import org.cloudfoundry.operations.services.Services;
 import org.cloudfoundry.util.FluentMap;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Answers;
@@ -616,9 +617,32 @@ public class CloudFoundryAppDeployerTests {
 
 		try {
 			this.deployer.status("test-application-id").getState();
+			Assert.fail();
 		} catch (IllegalStateException e) {
 			assertThat(e.getMessage(), containsString("Unsupported CF state"));
 		}
+	}
+
+	@SuppressWarnings("unchecked")
+	@Test
+	public void statusWithFailingCAPICallRetries() {
+		givenRequestGetApplication("test-application-id",
+			Mono.<ApplicationDetail>error(new RuntimeException("Simulated Server Side error")).doOnError(t -> System.out.println("Errr")),
+			Mono.just(ApplicationDetail.builder()
+			.diskQuota(0)
+			.id("test-application-id")
+			.instances(1)
+			.memoryLimit(0)
+			.name("test-application")
+			.requestedState("RUNNING")
+			.runningInstances(1)
+			.stack("test-stack")
+			.instanceDetail(InstanceDetail.builder()
+				.state("UNKNOWN")
+				.build())
+			.build()).doOnSuccess(w -> System.out.println("Wooohooo")));
+
+		this.deployer.status("test-application-id").getState();
 	}
 
 	@Test

@@ -22,6 +22,10 @@ import static org.springframework.cloud.deployer.spi.cloudfoundry.CloudFoundryDe
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
+
+import org.cloudfoundry.AbstractCloudFoundryException;
+import reactor.core.publisher.Hooks;
 
 import org.springframework.cloud.deployer.spi.app.AppDeployer;
 import org.springframework.cloud.deployer.spi.core.AppDeploymentRequest;
@@ -35,10 +39,19 @@ import org.springframework.util.StringUtils;
  */
 class AbstractCloudFoundryDeployer {
 
+	private static final int NOT_FOUND = 404;
+
 	final CloudFoundryDeploymentProperties deploymentProperties;
+
+	/**
+	 * How many ms to wait for API calls that ought to return "quickly". Not final so that tests can override.
+	 */
+	/*default*/ int shortApiCallsTimeoutMs = 10_000;
+
 
 	AbstractCloudFoundryDeployer(CloudFoundryDeploymentProperties deploymentProperties) {
 		this.deploymentProperties = deploymentProperties;
+		Hooks.onOperator(op -> op.operatorStacktrace());
 	}
 
 	int memory(AppDeploymentRequest request) {
@@ -63,6 +76,12 @@ class AbstractCloudFoundryDeployer {
 	String buildpack(AppDeploymentRequest request) {
 		return Optional.ofNullable(request.getDeploymentProperties().get(BUILDPACK_PROPERTY_KEY))
 			.orElse(this.deploymentProperties.getBuildpack());
+	}
+
+	Predicate<Throwable> isNotFoundError() {
+		return t -> {
+			System.out.println("isNotFoundError? Got " + t);
+			return t instanceof AbstractCloudFoundryException && ((AbstractCloudFoundryException) t).getStatusCode() == NOT_FOUND;};
 	}
 
 }
